@@ -1,0 +1,18 @@
+Mesh generation code:
+
+Calculates the vertices, number of triangles, number of side's mesh edges and total edges.
+Using 3 different keys in hach_find and hach_add one can test the average and max collision rate.
+
+Calculates quality of triangles through msh_tri_quality_Q1 and msh_tri_quality_Q2
+
+Computes the neighbors with msh_neighbors using a Hach table
+
+
+
+To compile/Compute do: 
+
+cd src/
+make clean
+make
+cd ..
+./src/mesh data/carre_4h.mesh
