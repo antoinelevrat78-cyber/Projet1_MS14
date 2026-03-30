@@ -73,6 +73,7 @@ typedef struct t_mesh {
 Mesh*   msh_init();
 Mesh*   msh_read(char* file, int readEfr);
 int     msh_write(Mesh* Msh, char* file);
+void msh_write_sol_quality(Mesh* Msh, const char* filename);
 double* sol_read(char* file, int mshDim, int mshNbrSol);
 
 //--- Functions to be implemented
@@ -82,6 +83,15 @@ double msh_tri_quality_Q2(Mesh* Msh, int iTri);
 int msh_boundingbox(Mesh* Msh); // compute the bouding box of the mesh
 int msh_neighbors(Mesh* Msh); // build TriVoi with a hash table
 int msh_neighborsQ2(Mesh* Msh); // build TriVoi with the naive quadratic approach
+
+int msh_insert_and_split(Mesh* Msh, int iTri, double x, double y);
+int msh_check_and_flip(Mesh* Msh, int iTri, int iEdg);
+double tri_area(double P[2], double P1[2], double P2[2]);
+int point_in_tri(Mesh* Msh, int iTri, double x, double y);
+int msh_locate_point(Mesh* Msh, double x, double y, int iTriStart);
+int msh_in_circle(Mesh* Msh, int iTri, double px, double py);
+int msh_global_sphere_criteria(Mesh* Msh, double px, double py);
+int msh_global_sphere_criteria_old_test(Mesh* Msh, double px, double py);
 
 //--- A provided simple hash table data structure
 typedef struct hash_table {

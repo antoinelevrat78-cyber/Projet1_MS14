@@ -271,7 +271,25 @@ int msh_write(Mesh* Msh, char* file)
   return 1;
 }
 
+void msh_write_sol_quality(Mesh* Msh, const char* filename) {
+    FILE* f = fopen(filename, "w");
+    if (!f) return;
 
+    fprintf(f, "MeshVersionFormatted 2\n");
+    fprintf(f, "Dimension 2\n\n");
+    fprintf(f, "SolAtTriangles\n");
+    fprintf(f, "%d\n", Msh->NbrTri);
+    fprintf(f, "1 1\n"); 
+
+    for (int t = 1; t <= Msh->NbrTri; t++) {
+        double q = msh_tri_quality_Q1(Msh, t);
+        fprintf(f, "%f\n", q);
+    }
+
+    fprintf(f, "\nEnd\n");
+    fclose(f);
+    printf("sol generted : %s\n", filename);
+}
 // Exercice 1:
 
 double msh_tri_quality_Q1(Mesh* Msh, int iTri) {
@@ -324,7 +342,7 @@ double msh_tri_quality_Q2(Mesh* Msh, int iTri) {
     double dx2 = x[2] - x[0];
     double dy2 = y[2] - y[0];
 
-    area = 0.5 * fabs(dx1 * dy2 - dx2 * dy1);
+    area = 0.5 * dx1 * dy2 - dx2 * dy1;
     p = (l2[0] + l2[1] + l2[2]); 
     rho = 2 * area / p; // radius of the inscribded's cercle
 
@@ -405,7 +423,8 @@ int msh_neighbors(Mesh* Msh)
       }
     }
   }
-
+  
+  /*
   // Here we add a part to calculate the stats of different Keys 
   // counting the sides
   for (iObj = 1; iObj <= hsh->NbrObj; iObj++) {
@@ -434,7 +453,7 @@ int msh_neighbors(Mesh* Msh)
   if (occupiedHeads > 0)
     printf("Average collisions:    %.2f\n", (float)hsh->NbrObj / occupiedHeads);
   printf("-----------------------\n");
-
+  */
   return 1;
 }
 
@@ -607,3 +626,263 @@ int msh_write2dmetric(char* file, int nmetric, double3d* metric)
 
   return 1;
 }
+
+
+// Project 2: first implementation of edge flip 
+// interts a point and creates 3 triangles
+int msh_insert_and_split(Mesh* Msh, int iTri, double x, double y) {
+    if (Msh->NbrTri + 2 > Msh->NbrTriMax || Msh->NbrVer + 1 > Msh->NbrVerMax) {
+        printf("Error :mesh max capacity .\n");
+        return 0;
+    }
+
+    // we create a point
+    int vP = ++Msh->NbrVer;
+    Msh->Crd[vP][0] = x;
+    Msh->Crd[vP][1] = y;
+
+    // 3 summits of the triangle
+    int v1 = Msh->Tri[iTri][0];
+    int v2 = Msh->Tri[iTri][1];
+    int v3 = Msh->Tri[iTri][2];
+    
+
+    // create 2 other triangles
+    int iTri2 = ++Msh->NbrTri;
+    int iTri3 = ++Msh->NbrTri;
+
+    // trigonometric
+    Msh->Tri[iTri][0] = v1; Msh->Tri[iTri][1] = v2; Msh->Tri[iTri][2] = vP;
+    Msh->Tri[iTri2][0] = v2; Msh->Tri[iTri2][1] = v3; Msh->Tri[iTri2][2] = vP;
+    Msh->Tri[iTri3][0] = v3; Msh->Tri[iTri3][1] = v1; Msh->Tri[iTri3][2] = vP;
+
+    //Rq : need to actualize the neibors
+    return 1;
+}
+
+// checks and flips if quality Q1 is better for target edge
+int msh_check_and_flip(Mesh* Msh, int iTri, int iEdg) {
+    int jTri = Msh->TriVoi[iTri][iEdg]; // neibor
+    if (jTri <= 0) return 0; // no neibours
+
+    // find the vertices of the quadrilatère
+    int vA = Msh->Tri[iTri][iEdg]; // opposed vertice
+    int vB = Msh->Tri[iTri][(iEdg + 1) % 3];
+    int vC = Msh->Tri[iTri][(iEdg + 2) % 3];
+
+    //opposed vertice of the triangle neibor
+    int vD = -1;
+    for (int k = 0; k < 3; k++) {
+        int v = Msh->Tri[jTri][k];
+        if (v != vB && v != vC) {
+            vD = v;
+            break;
+        }
+    }
+
+    double area1 = tri_area(Msh->Crd[vA], Msh->Crd[vB], Msh->Crd[vD]);
+    double area2 = tri_area(Msh->Crd[vA], Msh->Crd[vD], Msh->Crd[vC]);
+    
+    if (area1 <= 1e-12 || area2 <= 1e-12) return 0;
+
+    // find the max of the 2 qualities
+    double q_old = fmax(msh_tri_quality_Q1(Msh, iTri), msh_tri_quality_Q1(Msh, jTri));
+
+    // backup before edge flip
+    int3d backup_i = {Msh->Tri[iTri][0], Msh->Tri[iTri][1], Msh->Tri[iTri][2]};
+    int3d backup_j = {Msh->Tri[jTri][0], Msh->Tri[jTri][1], Msh->Tri[jTri][2]};
+
+    // edge flip for test
+    Msh->Tri[iTri][0] = vA; Msh->Tri[iTri][1] = vB; Msh->Tri[iTri][2] = vD;
+    Msh->Tri[jTri][0] = vA; Msh->Tri[jTri][1] = vD; Msh->Tri[jTri][2] = vC;
+
+    double q_new = fmax(msh_tri_quality_Q1(Msh, iTri), msh_tri_quality_Q1(Msh, jTri));
+
+    if (q_new < q_old) { 
+        //validated, we recalculate the neibours
+        return 1; 
+    } else {
+        // get back to prior config
+        for(int k=0; k<3; k++) {
+            Msh->Tri[iTri][k] = backup_i[k];
+            Msh->Tri[jTri][k] = backup_j[k];
+        }
+        return 0;
+    }
+}
+
+// finding if point is in triangle 
+double tri_area(double P[2], double P1[2], double P2[2]) {
+    return (P1[0] - P[0]) * (P2[1] - P[1]) - (P1[1] - P[1]) * (P2[0] - P[0]);
+}
+
+//if 3 areas are positive, point is in triangle
+int point_in_tri(Mesh* Msh, int iTri, double x, double y) {
+    double P[2] = {x, y};
+    double* A = Msh->Crd[Msh->Tri[iTri][0]];
+    double* B = Msh->Crd[Msh->Tri[iTri][1]];
+    double* C = Msh->Crd[Msh->Tri[iTri][2]];
+
+
+    double s1 = tri_area(P, A, B);
+    double s2 = tri_area(P, B, C);
+    double s3 = tri_area(P, C, A);
+
+    
+    if (s1 >= 0 && s2 >= 0 && s3 >= 0) return 1;
+    
+
+    return 0;
+}
+
+
+//faster algo for finding using edges and barycentric coordinates
+//with safety feature so that doesnt turn in circles
+int msh_locate_point(Mesh* Msh, double x, double y, int iTriStart) {
+    int iTri = iTriStart;
+    double P[2] = {x, y};
+    int iter = 0, maxIter = Msh->NbrTri;
+    int edges_neg[3], n_neg;
+
+    while (iTri > 0 && iter < maxIter) {
+        iter++;
+        n_neg = 0;
+        
+        for (int i = 0; i < 3; i++) { //test on the 3 vertices
+            int v1 = Msh->Tri[iTri][(i + 1) % 3];
+            int v2 = Msh->Tri[iTri][(i + 2) % 3];
+            if (tri_area(P, Msh->Crd[v1], Msh->Crd[v2]) < 0) {
+                edges_neg[n_neg++] = i; //i is the edgewe follow 
+            }
+        }
+
+        if (n_neg == 0) return iTri; 
+        int iEdgeChoice = edges_neg[rand() % n_neg]; // selects a rdm edge to avoid cercles
+        
+        //go to the neibour
+        int nextTri = Msh->TriVoi[iTri][iEdgeChoice];
+        if (nextTri <= 0) return iTri; // if on fronteer
+        iTri = nextTri;
+    }
+    
+    return iTri;
+}
+
+
+// Returns 1 if point P is in iTri else 0
+int msh_in_circle(Mesh* Msh, int iTri, double px, double py){
+    double* p1 = Msh->Crd[Msh->Tri[iTri][0]];
+    double* p2 = Msh->Crd[Msh->Tri[iTri][1]];
+    double* p3 = Msh->Crd[Msh->Tri[iTri][2]];
+    double x1 = p1[0], y1 = p1[1];
+    double x2 = p2[0], y2 = p2[1];
+    double x3 = p3[0], y3 = p3[1];
+
+    double D = 2 * (x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2));
+
+    double x1sq = x1*x1 + y1*y1;
+    double x2sq = x2*x2 + y2*y2;
+    double x3sq = x3*x3 + y3*y3;
+    //ox,oy is the center of the inscribded circle
+    double ox = (x1sq * (y2 - y3) + x2sq * (y3 - y1) + x3sq * (y1 - y2)) / D;
+    double oy = (x1sq * (x3 - x2) + x2sq * (x1 - x3) + x3sq * (x2 - x1)) / D;
+
+    double r2 = (ox - x1)*(ox - x1) + (oy - y1)*(oy - y1); //r2 is the squared radius of this circle
+    double distP2 = (ox - px)*(ox - px) + (oy - py)*(oy - py); // distance sqrd btween 
+
+    if (distP2 <= r2) {
+        return 1; // is in circle
+    }
+    return 0; // isnt in circle
+}
+
+//tests all triangles with msh_in_circle
+int msh_global_sphere_criteria(Mesh* Msh, double px, double py) {
+    int Max_Cavity = 100; // assume the cavity is at most 100 triangles (simpler for now)
+    int cavityTri[Max_Cavity]; 
+    int nbCav = 0;
+
+    /* 
+    //old technique
+    for (int t = 1; t <= Msh->NbrTri; t++) { // for all triangles in mesh
+        if (msh_in_circle(Msh, t, px, py) == 1) {
+            if (nbCav < Max_Cavity) cavityTri[nbCav++] = t; // we add the triangle
+        }
+    }*/
+    int iTriStart = msh_locate_point(Msh, px, py, 1);
+    cavityTri[nbCav++] = iTriStart;
+
+    //other option to go faster
+    for (int i = 0; i < nbCav; i++) {
+        int t = cavityTri[i];
+        
+        for (int e = 0; e < 3; e++) {
+            int neigh = Msh->TriVoi[t][e]; //get 3 neibours of startTri
+
+            // is neibour allready in cavity?
+            int alrdyin = 0;
+            for (int j = 0; j < nbCav; j++) {
+                if (cavityTri[j] == neigh) {
+                    alrdyin = 1;
+                    break;
+                }
+            }
+
+            //if not we test the circle
+            if (!alrdyin) {
+                if (msh_in_circle(Msh, neigh, px, py) == 1) {
+                    if (nbCav < 100) {
+                        cavityTri[nbCav++] = neigh; //then we continue for other neibours
+                    }
+                }
+            }
+        }
+    }
+
+    //find the vertices to the fronteer (in cavity) edges
+    int edges[300][2]; 
+    int nbEdges = 0;
+
+    for (int i = 0; i < nbCav; i++) {
+        int t = cavityTri[i];
+        for (int edg = 0; edg < 3; edg++) {
+            int neigh = Msh->TriVoi[t][edg];  //we get the neibour 
+            int neighInCavity = 0;
+            for (int j = 0; j < nbCav; j++) { // test for all triangle in cavity if it has neibour
+                if (neigh == cavityTri[j]) {
+                    neighInCavity = 1;
+                    break;
+                }
+            }
+
+            if (neighInCavity == 0) { // if neibour is not in cavity we add to edges
+                edges[nbEdges][0] = Msh->Tri[t][(edg + 1) % 3];
+                edges[nbEdges][1] = Msh->Tri[t][(edg + 2) % 3];
+                nbEdges++;
+            }
+        }
+    }
+
+    int vP = ++Msh->NbrVer; //we add the new point P
+    Msh->Crd[vP][0] = px;
+    Msh->Crd[vP][1] = py;
+    //we try to reuse the old triangles spots and recreate new one if needed
+    for (int i = 0; i < nbEdges; i++) {
+        int targetTri;
+        if (i < nbCav) {
+            targetTri = cavityTri[i]; //old
+        } else {
+            targetTri = ++Msh->NbrTri; //new
+        }
+        
+        Msh->Tri[targetTri][0] = edges[i][0];
+        Msh->Tri[targetTri][1] = edges[i][1];
+        Msh->Tri[targetTri][2] = vP;
+        Msh->TriRef[targetTri] = 1;
+    }
+
+    msh_neighbors(Msh); 
+
+    return 1;
+}
+
